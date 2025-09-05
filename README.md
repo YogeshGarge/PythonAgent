@@ -1,37 +1,30 @@
-from langchain import OpenAI
+import cv2
 import pytesseract
-from PIL import Image
-import pandas as pd
 
-llm = OpenAI(model="gpt-4")
+# Load image
+img = cv2.imread("receipt.png")
 
-# 1. OCR Receipt
-def extract_text_from_receipt(image_path):
-    img = Image.open(image_path)
-    return pytesseract.image_to_string(img)
+# Convert to grayscale
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-# 2. Categorize Expense
-def categorize_expense(text):
-    prompt = f"Classify this expense into Travel, Meals, or Office: {text}"
-    return llm(prompt)
+# Thresholding (binarization)
+_, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
 
-# 3. Validate Expense
-def validate_expense(amount, category):
-    rules = {"Meals": 1000, "Travel": 5000}
-    if amount > rules.get(category, 999999):
-        return False, "Exceeds limit"
-    return True, "OK"
+# Noise removal
+denoised = cv2.medianBlur(thresh, 3)
 
-# 4. Report Generator
-def generate_report(expenses, filename="report.xlsx"):
-    df = pd.DataFrame(expenses)
-    df.to_excel(filename, index=False)
+# Optional: Deskew (if tilted)
+coords = cv2.findNonZero(denoised)
+angle = cv2.minAreaRect(coords)[-1]
+if angle < -45:
+    angle = -(90 + angle)
+else:
+    angle = -angle
+(h, w) = denoised.shape[:2]
+M = cv2.getRotationMatrix2D((w // 2, h // 2), angle, 1.0)
+deskewed = cv2.warpAffine(denoised, M, (w, h),
+                          flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
 
-# Orchestrate
-expenses = []
-receipt_text = extract_text_from_receipt("uber.png")
-category = categorize_expense(receipt_text)
-is_valid, note = validate_expense(45, category)
-
-expenses.append({"item": receipt_text, "category": category, "amount": 45, "status": note})
-generate_report(expenses)
+# OCR with Tesseract
+text = pytesseract.image_to_string(deskewed, lang="eng")
+print(text)
